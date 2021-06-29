@@ -242,7 +242,7 @@ def main():
                 sample_step = 0
                 sample_i_rall = 0
 
-            writer.add_scalar('data/avg_reward_per_step', np.mean(rewards), global_step + num_worker * (cur_step - num_step))
+            # writer.add_scalar('data/avg_reward_per_step', np.mean(rewards), global_step + num_worker * (cur_step - num_step))
 
         while all(episode_rewards):
             global_ep += 1
