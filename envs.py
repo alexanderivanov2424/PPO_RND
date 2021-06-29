@@ -13,6 +13,8 @@ from model import *
 from config import *
 from PIL import Image
 
+from gym_montezuma.envs import MontezumasRevengeEnv
+
 train_method = default_config['TrainMethod']
 max_step_per_episode = int(default_config['MaxStepPerEpisode'])
 
@@ -129,9 +131,12 @@ class AtariEnvironment(Environment):
             p=0.25):
         super(AtariEnvironment, self).__init__()
         self.daemon = True
-        self.env = MaxAndSkipEnv(gym.make(env_id), is_render)
-        if 'Montezuma' in env_id:
-            self.env = MontezumaInfoWrapper(self.env, room_address=3 if 'Montezuma' in env_id else 1)
+        if 'skills' in env_id:
+            self.env = MontezumaInfoWrapper(MontezumasRevengeEnv(), room_address=3)
+        else:
+            self.env = MaxAndSkipEnv(gym.make(env_id), is_render)
+            if 'Montezuma' in env_id:
+                self.env = MontezumaInfoWrapper(self.env, room_address=3 if 'Montezuma' in env_id else 1)
         self.env_id = env_id
         self.is_render = is_render
         self.env_idx = env_idx
@@ -141,7 +146,7 @@ class AtariEnvironment(Environment):
         self.recent_rlist = deque(maxlen=100)
         self.child_conn = child_conn
 
-        self.sticky_action = sticky_action
+        self.sticky_action = False if 'skills' in env_id else sticky_action
         self.last_action = 0
         self.p = p
 
@@ -157,9 +162,15 @@ class AtariEnvironment(Environment):
         while True:
             action = self.child_conn.recv()
 
-            if 'Breakout' in self.env_id:
-                action += 1
+            if action == 'random':
+                action = np.random.choice(np.where(self.env.action_space.available_actions()==1)[0])
 
+            elif action == 'get_available_actions':
+                self.child_conn.send(self.env.action_space.available_actions())
+                continue
+
+            elif 'Breakout' in self.env_id:
+                action += 1
             # sticky action
             if self.sticky_action:
                 if np.random.rand() <= self.p:

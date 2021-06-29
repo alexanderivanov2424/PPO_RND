@@ -53,13 +53,20 @@ class RNDAgent(object):
 
         self.model = self.model.to(self.device)
 
-    def get_action(self, state):
+    def get_action(self, state, available_actions):
+        available_actions = np.array(available_actions, dtype=float)
         state = torch.tensor(state, dtype=torch.float)
         policy, value_ext, value_int = self.model(state)
-        action_prob = F.softmax(policy, dim=-1).data.cpu().numpy()
-
-        action = self.random_choice_prob_index(action_prob)
-
+        if available_actions is not None and np.sum(policy.detach().numpy()) == 0:
+            action = np.array([np.random.choice(np.where(actions==1)[0]) for actions in available_actions])
+        elif available_actions is not None:
+            action_prob = F.softmax(policy, dim=-1).data.cpu().numpy()
+            action_prob = action_prob * available_actions
+            action_prob /= np.sum(action_prob, axis=1)[:,None]
+            action = self.random_choice_prob_index(action_prob)
+        else:
+            action_prob = F.softmax(policy, dim=-1).data.cpu().numpy()
+            action = self.random_choice_prob_index(action_prob)
         return action, value_ext.data.cpu().numpy().squeeze(), value_int.data.cpu().numpy().squeeze(), policy.detach()
 
     @staticmethod
