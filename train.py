@@ -12,6 +12,8 @@ from drn_model import DeepRelNov
 from envs import *
 from utils import *
 
+import csv
+
 from gym_montezuma.envs import MontezumasRevengeEnv
 
 def main():
@@ -48,6 +50,10 @@ def main():
     run_path.mkdir(parents=True)
     log_path.mkdir()
     subgoals_path.mkdir()
+
+    with open(run_path / 'data.csv','w+') as fd:
+        csv_writer = csv.writer(fd, delimiter=',')
+        csv_writer.writerow(['avg_episode_reward','step'])
 
     writer = SummaryWriter(log_path)
 
@@ -248,6 +254,9 @@ def main():
             global_ep += 1
             avg_ep_reward = np.mean([env_ep_rewards.pop(0) for env_ep_rewards in episode_rewards])
             writer.add_scalar('data/avg_reward_per_episode', avg_ep_reward, global_ep)
+            with open(run_path / 'data.csv','a') as fd:
+                csv_writer = csv.writer(fd, delimiter=',')
+                csv_writer.writerow([avg_ep_reward, global_step])
 
         _, value_ext, value_int, _ = agent.get_action(np.float32(states) / 255., None)
         total_ext_values.append(value_ext)
