@@ -53,7 +53,7 @@ def main():
 
     with open(run_path / 'data.csv','w+') as fd:
         csv_writer = csv.writer(fd, delimiter=',')
-        csv_writer.writerow(['avg_episode_reward','step'])
+        csv_writer.writerow(['avg_episode_reward','options', 'steps'])
 
     writer = SummaryWriter(log_path)
 
@@ -147,6 +147,7 @@ def main():
     sample_i_rall = 0
     global_update = 0
     global_step = 0
+    true_global_step = 0
 
     # normalize obs
     print('Start to initailize observation normalization parameter.....')
@@ -196,13 +197,14 @@ def main():
 
             next_states, rewards, dones, real_dones, log_rewards, next_obs = [], [], [], [], [], []
             for parent_conn in parent_conns:
-                s, r, d, rd, lr, _ = parent_conn.recv()
+                s, r, d, rd, lr, info = parent_conn.recv()
                 next_states.append(s)
                 rewards.append(r)
                 dones.append(d)
                 real_dones.append(rd)
                 log_rewards.append(lr)
                 next_obs.append(s[-1, :, :].reshape([1, 84, 84]))
+                true_global_step += info['n_steps']
 
             next_states = np.stack(next_states)
             rewards = np.hstack(rewards)
@@ -256,7 +258,7 @@ def main():
             writer.add_scalar('data/avg_reward_per_episode', avg_ep_reward, global_ep)
             with open(run_path / 'data.csv','a') as fd:
                 csv_writer = csv.writer(fd, delimiter=',')
-                csv_writer.writerow([avg_ep_reward, global_step])
+                csv_writer.writerow([avg_ep_reward, global_step, true_global_step])
 
         _, value_ext, value_int, _ = agent.get_action(np.float32(states) / 255., None)
         total_ext_values.append(value_ext)
