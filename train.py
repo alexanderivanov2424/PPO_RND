@@ -88,6 +88,8 @@ def main():
     pre_obs_norm_step = int(default_config['ObsNormStep'])
     discounted_reward = RewardForwardFilter(int_gamma)
 
+    use_rnd = True
+
     agent = RNDAgent
 
     if default_config['EnvType'] == 'atari':
@@ -324,7 +326,10 @@ def main():
                                               num_worker)
 
         # add ext adv and int adv
-        total_adv = int_adv * int_coef + ext_adv * ext_coef
+        if use_rnd:
+            total_adv = int_adv * int_coef + ext_adv * ext_coef
+        else:
+            total_adv = ext_adv * ext_coef
         # -----------------------------------------------
 
         # Step 4. update obs normalize param
@@ -332,7 +337,8 @@ def main():
         # -----------------------------------------------
 
         # Step 5. Training!
-        agent.train_only_rnd(np.float32(total_all_state) / 255., ((total_all_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
+        if use_rnd:
+            agent.train_only_rnd(np.float32(total_all_state) / 255., ((total_all_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
         agent.train_model(np.float32(total_state) / 255., ext_target, int_target, total_action,
                           total_adv, ((total_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5),
                           total_policy)

@@ -86,7 +86,7 @@ class RNDAgent(object):
     def train_only_rnd(self, s_batch, next_obs_batch):
         s_batch = torch.tensor(s_batch, dtype=torch.float)
         next_obs_batch = torch.tensor(next_obs_batch, dtype=torch.float)
-        
+
         sample_range = np.arange(len(s_batch))
         forward_mse = nn.MSELoss(reduction='none')
         for _ in range(self.epoch):
