@@ -83,6 +83,32 @@ class RNDAgent(object):
 
         return intrinsic_reward.data.cpu().numpy()
 
+    def train_only_rnd(self, s_batch, next_obs_batch):
+        s_batch = torch.tensor(s_batch, dtype=torch.float)
+        next_obs_batch = torch.tensor(next_obs_batch, dtype=torch.float)
+        
+        sample_range = np.arange(len(s_batch))
+        forward_mse = nn.MSELoss(reduction='none')
+        for _ in range(self.epoch):
+            np.random.shuffle(sample_range)
+            for j in range(int(len(s_batch) / self.batch_size)):
+                sample_idx = sample_range[self.batch_size * j:self.batch_size * (j + 1)]
+
+                # --------------------------------------------------------------------------------
+                # for Curiosity-driven(Random Network Distillation)
+                predict_next_state_feature, target_next_state_feature = self.rnd(next_obs_batch[sample_idx])
+
+                forward_loss = forward_mse(predict_next_state_feature, target_next_state_feature.detach()).mean(-1)
+                # Proportion of exp used for predictor update
+                mask = torch.rand(len(forward_loss)) < self.update_proportion
+                loss = (forward_loss * mask).sum() / torch.max(mask.sum(), torch.tensor([1]))
+                # ---------------------------------------------------------------------------------
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                global_grad_norm_(list(self.model.parameters())+list(self.rnd.predictor.parameters()))
+                self.optimizer.step()
+
     def train_model(self, s_batch, target_ext_batch, target_int_batch, y_batch, adv_batch, next_obs_batch, old_policy):
         s_batch = torch.tensor(s_batch, dtype=torch.float)
         target_ext_batch = torch.tensor(target_ext_batch, dtype=torch.float)

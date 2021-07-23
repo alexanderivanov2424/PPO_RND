@@ -175,10 +175,11 @@ def main():
     global_ep = 0
 
     while True:
-        total_state, total_reward, total_done, total_action, total_int_reward, total_next_obs, total_ext_values, total_int_values, total_policy, total_policy_np = \
-            [], [], [], [], [], [], [], [], [], []
+        total_all_state, total_all_next_obs, total_state, total_reward, total_done, total_action, total_int_reward, total_next_obs, total_ext_values, total_int_values, total_policy, total_policy_np = \
+            [], [], [], [], [], [], [], [], [], [], [], []
         global_step += (num_worker * num_step)
         global_update += 1
+
 
         # Step 1. n-step rollout
         for cur_step in range(num_step):
@@ -195,9 +196,13 @@ def main():
             for parent_conn, action in zip(parent_conns, actions):
                 parent_conn.send(action)
 
-            next_states, rewards, dones, real_dones, log_rewards, next_obs = [], [], [], [], [], []
+            next_states, rewards, dones, real_dones, log_rewards, next_obs, all_states, all_next_obs = [], [], [], [], [], [], [], []
             for parent_conn in parent_conns:
                 s, r, d, rd, lr, info = parent_conn.recv()
+                # print("number of frames", len(info['frames']), "steps", info['n_steps'])
+                if len(info['frames']) > 0:
+                    all_states.extend(info['frames'])
+                    all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84]) for s in info['frames']])
                 next_states.append(s)
                 rewards.append(r)
                 dones.append(d)
@@ -206,6 +211,8 @@ def main():
                 next_obs.append(s[-1, :, :].reshape([1, 84, 84]))
                 true_global_step += info['n_steps']
 
+            all_states = np.stack(all_states, axis=0)
+            all_next_obs = np.stack(all_next_obs)
             next_states = np.stack(next_states)
             rewards = np.hstack(rewards)
             dones = np.hstack(dones)
@@ -227,6 +234,8 @@ def main():
 
             total_next_obs.append(next_obs)
             total_int_reward.append(intrinsic_reward)
+            total_all_state.append(all_states)
+            total_all_next_obs.append(all_next_obs)
             total_state.append(states)
             total_reward.append(rewards)
             total_done.append(dones)
@@ -265,11 +274,15 @@ def main():
         total_int_values.append(value_int)
         # --------------------------------------------------
 
-        total_state = np.stack(total_state).transpose([1, 0, 2, 3, 4]).reshape([-1, 4, 84, 84])
+        total_state = np.stack(total_state).reshape([-1, 4, 84, 84])
+        assert(total_all_state[0].shape[1] == 4 and total_all_state[0].shape[2] == 84 and total_all_state[0].shape[3] == 84)
+        total_all_state = np.concatenate(total_all_state).reshape([-1, 4, 84, 84])
         total_reward = np.stack(total_reward).transpose().clip(-1, 1)
         total_action = np.stack(total_action).transpose().reshape([-1])
         total_done = np.stack(total_done).transpose()
         total_next_obs = np.stack(total_next_obs).transpose([1, 0, 2, 3, 4]).reshape([-1, 1, 84, 84])
+        assert(total_all_next_obs[0].shape[1] == 1 and total_all_next_obs[1].shape[2] == 84)
+        total_all_next_obs = np.concatenate(total_all_next_obs).reshape([-1, 1, 84, 84])
         total_ext_values = np.stack(total_ext_values).transpose()
         total_int_values = np.stack(total_int_values).transpose()
         total_logging_policy = np.vstack(total_policy_np)
@@ -319,6 +332,7 @@ def main():
         # -----------------------------------------------
 
         # Step 5. Training!
+        agent.train_only_rnd(np.float32(total_all_state) / 255., ((total_all_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
         agent.train_model(np.float32(total_state) / 255., ext_target, int_target, total_action,
                           total_adv, ((total_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5),
                           total_policy)

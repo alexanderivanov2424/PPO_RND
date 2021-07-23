@@ -155,6 +155,8 @@ class AtariEnvironment(Environment):
         self.h = h
         self.w = w
 
+        self.previous_frames = None
+
         self.reset()
 
     def run(self):
@@ -178,6 +180,17 @@ class AtariEnvironment(Environment):
                 self.last_action = action
 
             s, reward, done, info = self.env.step(action)
+
+            proc_frames = np.array([self.pre_proc(s) for s in info['frames']])
+
+            if self.previous_frames is None:
+                frames = np.concatenate((self.history[-4:, :, :], proc_frames), axis=0) #use first 3 frames of init state
+                info['frames'] = [np.array([frames[j] for j in range(i - self.history_size, i)]) for i in range(4, len(frames))]
+            else:
+                frames = np.concatenate((self.previous_frames[-4:, :, :], proc_frames), axis=0)
+                info['frames'] = [np.array([frames[j] for j in range(i - self.history_size, i)]) for i in range(4, len(frames))]
+
+            self.previous_frames = proc_frames
 
             if max_step_per_episode < self.steps:
                 done = True
