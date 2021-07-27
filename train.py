@@ -283,7 +283,7 @@ def main():
         total_action = np.stack(total_action).transpose().reshape([-1])
         total_done = np.stack(total_done).transpose()
         total_next_obs = np.stack(total_next_obs).transpose([1, 0, 2, 3, 4]).reshape([-1, 1, 84, 84])
-        assert(total_all_next_obs[0].shape[1] == 1 and total_all_next_obs[1].shape[2] == 84)
+        assert(total_all_next_obs[0].shape[1] == 1 and total_all_next_obs[0].shape[2] == 84)
         total_all_next_obs = np.concatenate(total_all_next_obs).reshape([-1, 1, 84, 84])
         total_ext_values = np.stack(total_ext_values).transpose()
         total_int_values = np.stack(total_int_values).transpose()
