@@ -51,9 +51,16 @@ def main():
     log_path.mkdir()
     subgoals_path.mkdir()
 
-    with open(run_path / 'data.csv','w+') as fd:
+    with open(run_path / 'step_data.csv','w+') as fd:
+        #env_num, ep num, num option executions total, num actions executions total, ext op reward, done, real_done, action, player_pos, int_reward_per_one_decision
         csv_writer = csv.writer(fd, delimiter=',')
-        csv_writer.writerow(['avg_episode_reward','options', 'steps'])
+        csv_writer.writerow(['environment number','episode number', 'total option executions', 'total primitive action executions',
+                'extrinsic option reward', 'done', 'real done', 'action', 'player position (x,y)', 'intrinsic reward for one decision'])
+
+    with open(run_path / 'episode_data.csv','w+') as fd:
+        #env_num, ep num, ep_rew, number of options, number of actions, int_reward_per_epi
+        csv_writer = csv.writer(fd, delimiter=',')
+        csv_writer.writerow(['environment number','episode number', 'episode reward', 'episode length options', 'episode length primitives', 'intrinsic reward per episode'])
 
     writer = SummaryWriter(log_path)
 
@@ -170,9 +177,14 @@ def main():
             next_obs = []
     print('End to initalize...')
 
-    accumulated_worker_episode_reward = np.zeros((num_worker,))
+    total_option_executions = 0
+    total_primitive_executions = 0
 
-    episode_rewards = [[] for _ in range(num_worker)]
+    episode_counter = [0 for _ in range(num_worker)]
+    episode_rewards = [0 for _ in range(num_worker)]
+    episode_trajectories = [[] for _ in range(num_worker)]
+    episode_length_primitives = [0 for _ in range(num_worker)]
+
     step_rewards = [[] for _ in range(num_worker)]
     global_ep = 0
 
@@ -195,16 +207,46 @@ def main():
 
             actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255., available_actions)
 
-            for parent_conn, action in zip(parent_conns, actions):
+            for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
                 parent_conn.send(action)
+                episode_trajectories[i].append(action)
+
 
             next_states, rewards, dones, real_dones, log_rewards, next_obs, all_states, all_next_obs = [], [], [], [], [], [], [], []
-            for parent_conn in parent_conns:
+            for i, parent_conn in enumerate(parent_conns):
                 s, r, d, rd, lr, info = parent_conn.recv()
                 # print("number of frames", len(info['frames']), "steps", info['n_steps'])
                 if len(info['frames']) > 0:
                     all_states.extend(info['frames'])
                     all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84]) for s in info['frames']])
+
+                episode_rewards[i] += r
+                episode_trajectories[i].append(action)
+                episode_length_primitives[i] += info['n_steps']
+                total_option_executions += 1
+                total_primitive_executions += info['n_steps']
+
+                intrinsic_reward = agent.compute_intrinsic_reward(
+                    ((s[-1, :, :].reshape([1, 84, 84]) - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
+
+                with open(run_path / 'step_data.csv','a+') as fd:
+                    #env_num, ep num, num option executions total, num actions executions total, ext op reward, done, real_done, action, player_pos, int_reward_per_one_decision
+                    csv_writer = csv.writer(fd, delimiter=',')
+                    csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
+                            r, d, rd, episode_trajectories[i][-1], str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
+
+                if rd:
+                    episode_counter[i] += 1
+                    with open(run_path / 'episode_data.csv','a+') as fd:
+                        csv_writer = csv.writer(fd, delimiter=',')
+                        csv_writer.writerow([i, episode_counter[i], episode_rewards[i], len(episode_trajectories[i]), episode_length_primitives[i]])
+                    episode_rewards[i] = 0
+                    episode_trajectories[i] = []
+
+                #save seed, use env num *env_num == seed
+
+
+
                 next_states.append(s)
                 rewards.append(r)
                 dones.append(d)
@@ -213,6 +255,7 @@ def main():
                 next_obs.append(s[-1, :, :].reshape([1, 84, 84]))
                 true_global_step += info['n_steps']
 
+
             all_states = np.stack(all_states, axis=0)
             all_next_obs = np.stack(all_next_obs)
             next_states = np.stack(next_states)
@@ -220,13 +263,6 @@ def main():
             dones = np.hstack(dones)
             real_dones = np.hstack(real_dones)
             next_obs = np.stack(next_obs)
-
-            accumulated_worker_episode_reward += rewards
-            for i in range(len(rewards)):
-                step_rewards[i].append(rewards[i])
-                if real_dones[i]:
-                    episode_rewards[i].append(accumulated_worker_episode_reward[i])
-                    accumulated_worker_episode_reward[i] = 0
 
             # total reward = int reward + ext Reward
             intrinsic_reward = agent.compute_intrinsic_reward(
@@ -262,6 +298,7 @@ def main():
                 sample_i_rall = 0
 
             # writer.add_scalar('data/avg_reward_per_step', np.mean(rewards), global_step + num_worker * (cur_step - num_step))
+
 
         while all(episode_rewards):
             global_ep += 1
@@ -339,7 +376,7 @@ def main():
         # Step 5. Training!
         if use_rnd:
             agent.train_only_rnd(np.float32(total_all_state) / 255., ((total_all_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
-        agent.train_model(np.float32(total_state) / 255., ext_target, int_target, total_action,
+        agent.train_only_ppo(np.float32(total_state) / 255., ext_target, int_target, total_action,
                           total_adv, ((total_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5),
                           total_policy)
 

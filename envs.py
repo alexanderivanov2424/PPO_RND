@@ -132,7 +132,7 @@ class AtariEnvironment(Environment):
         super(AtariEnvironment, self).__init__()
         self.daemon = True
         if 'skills' in env_id:
-            self.env = MontezumaInfoWrapper(MontezumasRevengeEnv(), room_address=3)
+            self.env = MontezumaInfoWrapper(MontezumasRevengeEnv(seed=env_idx), room_address=3)
         else:
             self.env = MaxAndSkipEnv(gym.make(env_id), is_render)
             if 'Montezuma' in env_id:
