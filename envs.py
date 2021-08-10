@@ -168,7 +168,7 @@ class AtariEnvironment(Environment):
                 action = np.random.choice(np.where(self.env.action_space.available_actions()==1)[0])
 
             elif action == 'get_available_actions':
-                self.child_conn.send(self.env.action_space.available_actions())
+                self.child_conn.send(self.env.available_options())
                 continue
 
             elif 'Breakout' in self.env_id:
