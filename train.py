@@ -140,8 +140,11 @@ def main():
     child_conns = []
     for idx in range(num_worker):
         parent_conn, child_conn = Pipe()
+        # parent process env instance is a copy of the child process env. As long as all comunication to env is through the Pipe
+        # consistency is maintained
         work = env_type(env_id, is_render, idx, child_conn, sticky_action=sticky_action, p=action_prob,
                         life_done=life_done)
+
         work.start()
         works.append(work)
         parent_conns.append(parent_conn)
@@ -188,6 +191,8 @@ def main():
     step_rewards = [[] for _ in range(num_worker)]
     global_ep = 0
 
+    write_to_file_counter = 0
+
     while True:
         total_all_state, total_all_next_obs, total_state, total_reward, total_done, total_action, total_int_reward, total_next_obs, total_ext_values, total_int_values, total_policy, total_policy_np = \
             [], [], [], [], [], [], [], [], [], [], [], []
@@ -209,7 +214,6 @@ def main():
 
             for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
                 parent_conn.send(action)
-                episode_trajectories[i].append(action)
 
 
             next_states, rewards, dones, real_dones, log_rewards, next_obs, all_states, all_next_obs = [], [], [], [], [], [], [], []
@@ -233,18 +237,17 @@ def main():
                     #env_num, ep num, num option executions total, num actions executions total, ext op reward, done, real_done, action, player_pos, int_reward_per_one_decision
                     csv_writer = csv.writer(fd, delimiter=',')
                     csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
-                            r, d, rd, episode_trajectories[i][-1], str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
+                            r, d, rd, action, str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
+                    fd.flush()
+                    print(i, episode_counter[i], action)
 
                 if rd:
-                    episode_counter[i] += 1
                     with open(run_path / 'episode_data.csv','a+') as fd:
                         csv_writer = csv.writer(fd, delimiter=',')
                         csv_writer.writerow([i, episode_counter[i], episode_rewards[i], len(episode_trajectories[i]), episode_length_primitives[i]])
+                    episode_counter[i] += 1
                     episode_rewards[i] = 0
                     episode_trajectories[i] = []
-
-                #save seed, use env num *env_num == seed
-
 
 
                 next_states.append(s)

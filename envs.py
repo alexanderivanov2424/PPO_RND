@@ -161,13 +161,18 @@ class AtariEnvironment(Environment):
 
     def run(self):
         super(AtariEnvironment, self).run()
+
         while True:
             action = self.child_conn.recv()
 
+            # Using env.available_options instead of env.action_space.available_actions because action_space is
+            # created with a pointer to the parent process's env and so env.available_options returns the child process's
+            # available options instead of the parent process's available options (which has not been).
             if action == 'random':
-                action = np.random.choice(np.where(self.env.action_space.available_actions()==1)[0])
+                action = np.random.choice(np.where(self.env.available_options()==1)[0])
 
             elif action == 'get_available_actions':
+                # assert np.all(self.env.available_options() == self.env.action_space.available_actions()), "action space should match env method"
                 self.child_conn.send(self.env.available_options())
                 continue
 
