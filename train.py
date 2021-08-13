@@ -96,6 +96,7 @@ def main():
     discounted_reward = RewardForwardFilter(int_gamma)
 
     use_rnd = True
+    use_random_actions = True
 
     agent = RNDAgent
 
@@ -208,12 +209,17 @@ def main():
 
             available_actions = []
             for parent_conn in parent_conns:
-                available_actions.append(parent_conn.recv())
+                available_actions_list = parent_conn.recv()
+                if use_random_actions:
+                    parent_conn.send(np.random.choice(available_actions_list))
+                else:
+                    available_actions.append(available_actions_list)
 
-            actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255., available_actions)
+            if not use_random_actions:
+                actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255., available_actions)
 
-            for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
-                parent_conn.send(action)
+                for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
+                    parent_conn.send(action)
 
 
             next_states, rewards, dones, real_dones, log_rewards, next_obs, all_states, all_next_obs = [], [], [], [], [], [], [], []
