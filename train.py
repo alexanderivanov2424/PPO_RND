@@ -211,7 +211,9 @@ def main():
             for parent_conn in parent_conns:
                 available_actions_list = parent_conn.recv()
                 if use_random_actions:
-                    parent_conn.send(np.random.choice(available_actions_list))
+                    action = np.random.choice(np.where(available_actions_list)[0])
+                    episode_trajectories[i].append(action)
+                    parent_conn.send(action)
                 else:
                     available_actions.append(available_actions_list)
 
@@ -219,6 +221,7 @@ def main():
                 actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255., available_actions)
 
                 for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
+                    episode_trajectories[i].append(action)
                     parent_conn.send(action)
 
 
@@ -231,7 +234,6 @@ def main():
                     all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84]) for s in info['frames']])
 
                 episode_rewards[i] += r
-                episode_trajectories[i].append(action)
                 episode_length_primitives[i] += info['n_steps']
                 total_option_executions += 1
                 total_primitive_executions += info['n_steps']
