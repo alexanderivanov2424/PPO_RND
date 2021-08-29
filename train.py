@@ -217,12 +217,14 @@ def main():
                 else:
                     available_actions.append(available_actions_list)
 
+            executed_actions = [None for _ in parent_conns]
             if not use_random_actions:
                 actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255., available_actions)
 
                 for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
                     episode_trajectories[i].append(action)
                     parent_conn.send(action)
+                    executed_actions[i] = action
 
 
             next_states, rewards, dones, real_dones, log_rewards, next_obs, all_states, all_next_obs = [], [], [], [], [], [], [], []
@@ -245,7 +247,7 @@ def main():
                     #env_num, ep num, num option executions total, num actions executions total, ext op reward, done, real_done, action, player_pos, int_reward_per_one_decision
                     csv_writer = csv.writer(fd, delimiter=',')
                     csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
-                            r, d, rd, action, str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
+                            r, d, rd, executed_actions[i], str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
                     fd.flush()
                     print(i, episode_counter[i], action)
 
