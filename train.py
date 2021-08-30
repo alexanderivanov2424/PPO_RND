@@ -249,7 +249,7 @@ def main():
                     csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
                             r, d, rd, executed_actions[i], str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
                     fd.flush()
-                    print(i, episode_counter[i], action)
+                    # print(i, episode_counter[i], action)
 
                 if rd:
                     with open(run_path / 'episode_data.csv','a+') as fd:
