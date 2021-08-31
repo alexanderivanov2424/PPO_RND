@@ -96,7 +96,7 @@ def main():
     discounted_reward = RewardForwardFilter(int_gamma)
 
     use_rnd = True
-    use_random_actions = False
+    use_random_actions = True
 
     agent = RNDAgent
 
@@ -195,6 +195,7 @@ def main():
     write_to_file_counter = 0
 
     while True:
+        print("test")
         total_all_state, total_all_next_obs, total_state, total_reward, total_done, total_action, total_int_reward, total_next_obs, total_ext_values, total_int_values, total_policy, total_policy_np = \
             [], [], [], [], [], [], [], [], [], [], [], []
         global_step += (num_worker * num_step)
@@ -203,16 +204,22 @@ def main():
 
         # Step 1. n-step rollout
         for cur_step in range(num_step):
+            print(cur_step)
 
             for parent_conn in parent_conns:
                 parent_conn.send('get_available_actions')
 
             available_actions = []
-            for parent_conn in parent_conns:
+            actions = []
+            value_ext = np.zeros(len(parent_conns))
+            value_int = np.zeros(len(parent_conns))
+            policy = torch.tensor(np.zeros(len(parent_conns)))
+            for i, parent_conn in enumerate(parent_conns):
                 available_actions_list = parent_conn.recv()
                 if use_random_actions:
                     action = np.random.choice(np.where(available_actions_list)[0])
                     episode_trajectories[i].append(action)
+                    actions.append(actions)
                     parent_conn.send(action)
                 else:
                     available_actions.append(available_actions_list)
@@ -283,6 +290,8 @@ def main():
             intrinsic_reward = np.hstack(intrinsic_reward)
             sample_i_rall += intrinsic_reward[sample_env_idx]
 
+
+
             total_next_obs.append(next_obs)
             total_int_reward.append(intrinsic_reward)
             total_all_state.append(all_states)
@@ -309,9 +318,7 @@ def main():
                 sample_rall = 0
                 sample_step = 0
                 sample_i_rall = 0
-
             # writer.add_scalar('data/avg_reward_per_step', np.mean(rewards), global_step + num_worker * (cur_step - num_step))
-
 
         while all(episode_rewards):
             global_ep += 1
@@ -353,7 +360,6 @@ def main():
         writer.add_scalar('data/int_reward_per_epi', np.sum(total_int_reward) / num_worker, sample_episode)
         writer.add_scalar('data/int_reward_per_rollout', np.sum(total_int_reward) / num_worker, global_update)
         # -------------------------------------------------------------------------------------------
-
         # logging Max action probability
         writer.add_scalar('data/max_prob', softmax(total_logging_policy).max(1).mean(), sample_episode)
 
