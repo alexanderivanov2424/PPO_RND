@@ -95,8 +95,8 @@ def main():
     pre_obs_norm_step = int(default_config['ObsNormStep'])
     discounted_reward = RewardForwardFilter(int_gamma)
 
-    use_rnd = True
-    use_random_actions = True
+    use_rnd = False
+    use_random_actions = False
 
     agent = RNDAgent
 
