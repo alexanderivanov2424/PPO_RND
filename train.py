@@ -16,6 +16,8 @@ import csv
 
 from gym_montezuma.envs import MontezumasRevengeEnv
 
+from parser import parse_args_and_update_config
+
 def main():
     print({section: dict(config[section]) for section in config.sections()})
     train_method = default_config['TrainMethod']
@@ -50,6 +52,8 @@ def main():
     run_path.mkdir(parents=True)
     log_path.mkdir()
     subgoals_path.mkdir()
+
+    save_config(log_path)
 
     with open(run_path / 'step_data.csv','w+') as fd:
         #env_num, ep num, num option executions total, num actions executions total, ext op reward, done, real_done, action, player_pos, int_reward_per_one_decision
@@ -405,4 +409,5 @@ def main():
 
 
 if __name__ == '__main__':
+    default_config = parse_args_and_update_config(default_config)
     main()
