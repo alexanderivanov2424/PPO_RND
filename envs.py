@@ -104,7 +104,7 @@ class MontezumaInfoWrapper(gym.Wrapper):
 
         if 'episode' not in info:
             info['episode'] = {}
-        info['episode'].update(visited_rooms=copy(self.visited_rooms))
+        info['episode'].update(visited_rooms=copy.copy(self.visited_rooms))
         info['current_room'] = self.get_current_room()
         info['player_pos'] = self.get_player_pos()
 
