@@ -383,6 +383,9 @@ def main():
                                                   num_step,
                                                   num_worker)
 
+            int_target = np.zeros(ext_target.shape)
+            int_adv = 0
+
             # add ext adv and int adv
             if use_rnd:
                 total_adv = int_adv * int_coef + ext_adv * ext_coef

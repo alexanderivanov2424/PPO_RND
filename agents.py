@@ -147,9 +147,9 @@ class RNDAgent(object):
 
                 actor_loss = -torch.min(surr1, surr2).mean()
                 critic_ext_loss = F.mse_loss(value_ext.sum(1), target_ext_batch[sample_idx])
-                critic_int_loss = F.mse_loss(value_int.sum(1), target_int_batch[sample_idx])
+                #critic_int_loss = F.mse_loss(value_int.sum(1), target_int_batch[sample_idx])
 
-                critic_loss = critic_ext_loss + critic_int_loss
+                critic_loss = critic_ext_loss
 
                 entropy = m.entropy().mean()
 
