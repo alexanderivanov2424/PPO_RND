@@ -239,8 +239,10 @@ def main():
                 s, r, d, rd, lr, info = parent_conn.recv()
                 # print("number of frames", len(info['frames']), "steps", info['n_steps'])
                 if len(info['frames']) > 0:
-                    all_states.extend(info['frames'])
-                    all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84]) for s in info['frames']])
+                    # all_states.extend(info['frames'])
+                    # all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84]) for s in info['frames']])
+                    all_states.extend(s)
+                    all_next_obs.extend(s[-1, :, :].reshape([1, 84, 84]))
 
                 episode_rewards[i] += r
                 episode_length_primitives[i] += info['n_steps']
