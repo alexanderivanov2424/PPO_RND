@@ -99,7 +99,7 @@ def main():
     pre_obs_norm_step = int(default_config['ObsNormStep'])
     discounted_reward = RewardForwardFilter(int_gamma)
 
-    use_rnd = False
+    use_rnd = True
     use_random_actions = False
 
     agent = RNDAgent
@@ -241,8 +241,8 @@ def main():
                 if len(info['frames']) > 0:
                     # all_states.extend(info['frames'])
                     # all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84]) for s in info['frames']])
-                    all_states.extend(s)
-                    all_next_obs.extend(s[-1, :, :].reshape([1, 84, 84]))
+                    all_states.extend([s])
+                    all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84])])
 
                 episode_rewards[i] += r
                 episode_length_primitives[i] += info['n_steps']
@@ -401,10 +401,14 @@ def main():
 
             # Step 5. Training!
             if use_rnd:
-                agent.train_only_rnd(np.float32(total_all_state) / 255., ((total_all_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
-            agent.train_only_ppo(np.float32(total_state) / 255., ext_target, int_target, total_action,
-                              total_adv, ((total_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5),
-                              total_policy)
+                # agent.train_only_rnd(np.float32(total_all_state) / 255., ((total_all_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
+                agent.train_model(np.float32(total_state) / 255., ext_target, int_target, total_action,
+                                  total_adv, ((total_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5),
+                                  total_policy)
+            else:
+                agent.train_only_ppo(np.float32(total_state) / 255., ext_target, int_target, total_action,
+                                  total_adv, ((total_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5),
+                                  total_policy)
 
             if global_step % (num_worker * num_step * 100) == 0:
                 print('Now Global Step :{}'.format(global_step))
