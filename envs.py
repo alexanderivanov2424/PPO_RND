@@ -169,11 +169,17 @@ class AtariEnvironment(Environment):
             # created with a pointer to the parent process's env and so env.available_options returns the child process's
             # available options instead of the parent process's available options (which has not been).
             if action == 'random':
-                action = np.random.choice(np.where(self.env.available_options()==1)[0])
+                if hasattr(self.env, 'available_options'):
+                    action = np.random.choice(np.where(self.env.available_options()==1)[0])
+                else:
+                    action = np.random.choice(np.where(np.ones((self.env.action_space.n,))==1)[0])
 
             elif action == 'get_available_actions':
                 # assert np.all(self.env.available_options() == self.env.action_space.available_actions()), "action space should match env method"
-                self.child_conn.send(self.env.available_options())
+                if hasattr(self.env, 'available_options'):
+                    self.child_conn.send(self.env.available_options())
+                else:
+                    self.child_conn.send(np.ones((self.env.action_space.n,)))
                 continue
 
             elif 'Breakout' in self.env_id:
@@ -186,16 +192,17 @@ class AtariEnvironment(Environment):
 
             s, reward, done, info = self.env.step(action)
 
-            proc_frames = np.array([self.pre_proc(s) for s in info['frames']])
+            if 'frames' in info.keys():
+                proc_frames = np.array([self.pre_proc(s) for s in info['frames']])
 
-            if self.previous_frames is None:
-                frames = np.concatenate((self.history[-4:, :, :], proc_frames), axis=0) #use first 3 frames of init state
-                info['frames'] = [np.array([frames[j] for j in range(i - self.history_size, i)]) for i in range(4, len(frames))]
-            else:
-                frames = np.concatenate((self.previous_frames[-4:, :, :], proc_frames), axis=0)
-                info['frames'] = [np.array([frames[j] for j in range(i - self.history_size, i)]) for i in range(4, len(frames))]
+                if self.previous_frames is None:
+                    frames = np.concatenate((self.history[-4:, :, :], proc_frames), axis=0) #use first 3 frames of init state
+                    info['frames'] = [np.array([frames[j] for j in range(i - self.history_size, i)]) for i in range(4, len(frames))]
+                else:
+                    frames = np.concatenate((self.previous_frames[-4:, :, :], proc_frames), axis=0)
+                    info['frames'] = [np.array([frames[j] for j in range(i - self.history_size, i)]) for i in range(4, len(frames))]
 
-            self.previous_frames = proc_frames
+                self.previous_frames = proc_frames
 
             if max_step_per_episode < self.steps:
                 done = True

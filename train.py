@@ -19,6 +19,7 @@ from gym_montezuma.envs import MontezumasRevengeEnv
 from parser import parse_args_and_update_config
 
 def main():
+
     print({section: dict(config[section]) for section in config.sections()})
     train_method = default_config['TrainMethod']
     assert train_method == 'RND'
@@ -99,7 +100,7 @@ def main():
     pre_obs_norm_step = int(default_config['ObsNormStep'])
     discounted_reward = RewardForwardFilter(int_gamma)
 
-    use_rnd = True
+    use_rnd = False
     use_random_actions = False
 
     agent = RNDAgent
@@ -238,16 +239,17 @@ def main():
             for i, parent_conn in enumerate(parent_conns):
                 s, r, d, rd, lr, info = parent_conn.recv()
                 # print("number of frames", len(info['frames']), "steps", info['n_steps'])
-                if len(info['frames']) > 0:
+
+                # if len(info['frames']) > 0:
                     # all_states.extend(info['frames'])
                     # all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84]) for s in info['frames']])
-                    all_states.extend([s])
-                    all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84])])
+                all_states.extend([s])
+                all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84])])
 
                 episode_rewards[i] += r
-                episode_length_primitives[i] += info['n_steps']
+                episode_length_primitives[i] += info['n_steps'] if 'n_steps' in info.keys() else 1
                 total_option_executions += 1
-                total_primitive_executions += info['n_steps']
+                total_primitive_executions += info['n_steps'] if 'n_steps' in info.keys() else 1
 
                 intrinsic_reward = agent.compute_intrinsic_reward(
                     ((s[-1, :, :].reshape([1, 84, 84]) - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
@@ -255,8 +257,12 @@ def main():
                 with open(run_path / 'step_data.csv','a+') as fd:
                     #env_num, ep num, num option executions total, num actions executions total, ext op reward, done, real_done, action, player_pos, int_reward_per_one_decision
                     csv_writer = csv.writer(fd, delimiter=',')
-                    csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
-                            r, d, rd, executed_actions[i], str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
+                    if 'states' in info.keys():
+                        csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
+                                r, d, rd, executed_actions[i], str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
+                    else:
+                        csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
+                                r, d, rd, executed_actions[i], "NA", intrinsic_reward])
                     fd.flush()
                     # print(i, episode_counter[i], action)
 
@@ -267,6 +273,7 @@ def main():
                     episode_counter[i] += 1
                     episode_rewards[i] = 0
                     episode_trajectories[i] = []
+                    global_ep += 1
 
 
                 next_states.append(s)
@@ -275,7 +282,7 @@ def main():
                 real_dones.append(rd)
                 log_rewards.append(lr)
                 next_obs.append(s[-1, :, :].reshape([1, 84, 84]))
-                true_global_step += info['n_steps']
+                true_global_step += info['n_steps'] if 'n_steps' in info.keys() else 1
 
             if not use_random_actions:
                 all_states = np.stack(all_states, axis=0)
@@ -324,13 +331,13 @@ def main():
 
         if not use_random_actions:
 
-            while all(episode_rewards):
-                global_ep += 1
-                avg_ep_reward = np.mean([env_ep_rewards.pop(0) for env_ep_rewards in episode_rewards])
-                writer.add_scalar('data/avg_reward_per_episode', avg_ep_reward, global_ep)
-                with open(run_path / 'data.csv','a') as fd:
-                    csv_writer = csv.writer(fd, delimiter=',')
-                    csv_writer.writerow([avg_ep_reward, global_step, true_global_step])
+            # while all(episode_rewards):
+            #     global_ep += 1
+                # avg_ep_reward = np.mean([env_ep_rewards.pop(0) for env_ep_rewards in episode_rewards])
+                # writer.add_scalar('data/avg_reward_per_episode', avg_ep_reward, global_ep)
+                # with open(run_path / 'data.csv','a') as fd:
+                #     csv_writer = csv.writer(fd, delimiter=',')
+                #     csv_writer.writerow([avg_ep_reward, global_step, true_global_step])
 
             _, value_ext, value_int, _ = agent.get_action(np.float32(states) / 255., None)
             total_ext_values.append(value_ext)
@@ -385,7 +392,8 @@ def main():
                                                   num_step,
                                                   num_worker)
 
-            int_target = np.zeros(ext_target.shape)
+            if not use_rnd:
+                int_target = np.zeros(ext_target.shape)
             int_adv = 0
 
             # add ext adv and int adv
