@@ -394,7 +394,7 @@ def main():
 
             if not use_rnd:
                 int_target = np.zeros(ext_target.shape)
-            int_adv = 0
+                int_adv = 0
 
             # add ext adv and int adv
             if use_rnd:
