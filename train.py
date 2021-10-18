@@ -3,7 +3,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from tensorboardX import SummaryWriter
 from torch.multiprocessing import Pipe
 
 from agents import *
@@ -45,7 +44,6 @@ def main():
     log_path.mkdir()
     subgoals_path.mkdir()
 
-    writer = SummaryWriter(log_path)
 
     use_cuda = default_config.getboolean('UseGPU')
     use_gae = default_config.getboolean('UseGAE')
@@ -156,12 +154,6 @@ def main():
             next_obs = []
     print('End to initalize...')
 
-    accumulated_worker_episode_reward = np.zeros((num_worker,))
-
-    episode_rewards = [[] for _ in range(num_worker)]
-    step_rewards = [[] for _ in range(num_worker)]
-    global_ep = 0
-
     while True:
         total_state, total_reward, total_done, total_action, total_int_reward, total_next_obs, total_ext_values, total_int_values, total_policy, total_policy_np = \
             [], [], [], [], [], [], [], [], [], []
@@ -191,13 +183,6 @@ def main():
             real_dones = np.hstack(real_dones)
             next_obs = np.stack(next_obs)
 
-            accumulated_worker_episode_reward += rewards
-            for i in range(len(rewards)):
-                step_rewards[i].append(rewards[i])
-                if real_dones[i]:
-                    episode_rewards[i].append(accumulated_worker_episode_reward[i])
-                    accumulated_worker_episode_reward[i] = 0
-
             # total reward = int reward + ext Reward
             intrinsic_reward = agent.compute_intrinsic_reward(
                 ((next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
@@ -222,20 +207,10 @@ def main():
             sample_step += 1
             if real_dones[sample_env_idx]:
                 sample_episode += 1
-                writer.add_scalar('data/reward_per_epi', sample_rall, sample_episode)
-                writer.add_scalar('data/reward_per_rollout', sample_rall, global_update)
-                writer.add_scalar('data/step', sample_step, sample_episode)
                 sample_rall = 0
                 sample_step = 0
                 sample_i_rall = 0
 
-            writer.add_scalar('data/avg_reward_per_step', np.mean(rewards), global_step + num_worker * (cur_step - num_step))
-
-        while all(episode_rewards):
-            global_ep += 1
-            avg_ep_reward = np.mean([env_ep_rewards.pop(0) for env_ep_rewards in episode_rewards])
-            writer.add_scalar('data/avg_reward_per_episode', avg_ep_reward, global_ep)
-            writer.add_scalar('data/avg_reward_per_episode_at_step', avg_ep_reward, global_step)
 
         _, value_ext, value_int, _ = agent.get_action(np.float32(states) / 255.)
         total_ext_values.append(value_ext)
@@ -262,12 +237,9 @@ def main():
 
         # normalize intrinsic reward
         total_int_reward /= np.sqrt(reward_rms.var)
-        writer.add_scalar('data/int_reward_per_epi', np.sum(total_int_reward) / num_worker, sample_episode)
-        writer.add_scalar('data/int_reward_per_rollout', np.sum(total_int_reward) / num_worker, global_update)
         # -------------------------------------------------------------------------------------------
 
         # logging Max action probability
-        writer.add_scalar('data/max_prob', softmax(total_logging_policy).max(1).mean(), sample_episode)
 
         # Step 3. make target and advantage
         # extrinsic reward calculate
