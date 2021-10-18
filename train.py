@@ -8,7 +8,6 @@ from torch.multiprocessing import Pipe
 
 from agents import *
 from config import *
-from drn_model import DeepRelNov
 from envs import *
 from utils import *
 
@@ -103,7 +102,6 @@ def main():
         use_gae=use_gae,
         use_noisy_net=use_noisy_net
     )
-    drn_model = DeepRelNov(agent.rnd, input_size, output_size, use_cuda=use_cuda)
 
     if is_load_model:
         print('load model...')
