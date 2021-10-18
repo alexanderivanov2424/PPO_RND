@@ -13,8 +13,6 @@ from model import *
 from config import *
 from PIL import Image
 
-from gym_montezuma.envs import MontezumasRevengeEnv
-
 train_method = default_config['TrainMethod']
 max_step_per_episode = int(default_config['MaxStepPerEpisode'])
 
@@ -104,7 +102,7 @@ class MontezumaInfoWrapper(gym.Wrapper):
 
         if 'episode' not in info:
             info['episode'] = {}
-        info['episode'].update(visited_rooms=copy.copy(self.visited_rooms))
+        info['episode'].update(visited_rooms=copy(self.visited_rooms))
         info['current_room'] = self.get_current_room()
         info['player_pos'] = self.get_player_pos()
 
@@ -131,12 +129,9 @@ class AtariEnvironment(Environment):
             p=0.25):
         super(AtariEnvironment, self).__init__()
         self.daemon = True
-        if 'skills' in env_id:
-            self.env = MontezumaInfoWrapper(MontezumasRevengeEnv(seed=env_idx), room_address=3)
-        else:
-            self.env = MaxAndSkipEnv(gym.make(env_id), is_render)
-            if 'Montezuma' in env_id:
-                self.env = MontezumaInfoWrapper(self.env, room_address=3 if 'Montezuma' in env_id else 1)
+        self.env = MaxAndSkipEnv(gym.make(env_id), is_render)
+        if 'Montezuma' in env_id:
+            self.env = MontezumaInfoWrapper(self.env, room_address=3 if 'Montezuma' in env_id else 1)
         self.env_id = env_id
         self.is_render = is_render
         self.env_idx = env_idx
@@ -146,7 +141,7 @@ class AtariEnvironment(Environment):
         self.recent_rlist = deque(maxlen=100)
         self.child_conn = child_conn
 
-        self.sticky_action = False if 'skills' in env_id else sticky_action
+        self.sticky_action = sticky_action
         self.last_action = 0
         self.p = p
 
@@ -155,35 +150,16 @@ class AtariEnvironment(Environment):
         self.h = h
         self.w = w
 
-        self.previous_frames = None
-
         self.reset()
 
     def run(self):
         super(AtariEnvironment, self).run()
-
         while True:
             action = self.child_conn.recv()
 
-            # Using env.available_options instead of env.action_space.available_actions because action_space is
-            # created with a pointer to the parent process's env and so env.available_options returns the child process's
-            # available options instead of the parent process's available options (which has not been).
-            if action == 'random':
-                if hasattr(self.env, 'available_options'):
-                    action = np.random.choice(np.where(self.env.available_options()==1)[0])
-                else:
-                    action = np.random.choice(np.where(np.ones((self.env.action_space.n,))==1)[0])
-
-            elif action == 'get_available_actions':
-                # assert np.all(self.env.available_options() == self.env.action_space.available_actions()), "action space should match env method"
-                if hasattr(self.env, 'available_options'):
-                    self.child_conn.send(self.env.available_options())
-                else:
-                    self.child_conn.send(np.ones((self.env.action_space.n,)))
-                continue
-
-            elif 'Breakout' in self.env_id:
+            if 'Breakout' in self.env_id:
                 action += 1
+
             # sticky action
             if self.sticky_action:
                 if np.random.rand() <= self.p:
@@ -191,18 +167,6 @@ class AtariEnvironment(Environment):
                 self.last_action = action
 
             s, reward, done, info = self.env.step(action)
-
-            if 'frames' in info.keys():
-                proc_frames = np.array([self.pre_proc(s) for s in info['frames']])
-
-                if self.previous_frames is None:
-                    frames = np.concatenate((self.history[-4:, :, :], proc_frames), axis=0) #use first 3 frames of init state
-                    info['frames'] = [np.array([frames[j] for j in range(i - self.history_size, i)]) for i in range(4, len(frames))]
-                else:
-                    frames = np.concatenate((self.previous_frames[-4:, :, :], proc_frames), axis=0)
-                    info['frames'] = [np.array([frames[j] for j in range(i - self.history_size, i)]) for i in range(4, len(frames))]
-
-                self.previous_frames = proc_frames
 
             if max_step_per_episode < self.steps:
                 done = True

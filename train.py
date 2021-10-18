@@ -12,23 +12,15 @@ from drn_model import DeepRelNov
 from envs import *
 from utils import *
 
-import csv
-
-from gym_montezuma.envs import MontezumasRevengeEnv
-
-from parser import parse_args_and_update_config
 
 def main():
-
     print({section: dict(config[section]) for section in config.sections()})
     train_method = default_config['TrainMethod']
     assert train_method == 'RND'
     env_id = default_config['EnvID']
     env_type = default_config['EnvType']
 
-    if 'skills' in env_id:
-        env = MontezumasRevengeEnv()
-    elif env_type == 'atari':
+    if env_type == 'atari':
         env = gym.make(env_id)
     else:
         raise NotImplementedError
@@ -53,19 +45,6 @@ def main():
     run_path.mkdir(parents=True)
     log_path.mkdir()
     subgoals_path.mkdir()
-
-    save_config(log_path)
-
-    with open(run_path / 'step_data.csv','w+') as fd:
-        #env_num, ep num, num option executions total, num actions executions total, ext op reward, done, real_done, action, player_pos, int_reward_per_one_decision
-        csv_writer = csv.writer(fd, delimiter=',')
-        csv_writer.writerow(['environment number','episode number', 'total option executions', 'total primitive action executions',
-                'extrinsic option reward', 'done', 'real done', 'action', 'player position (x,y)', 'intrinsic reward for one decision'])
-
-    with open(run_path / 'episode_data.csv','w+') as fd:
-        #env_num, ep num, ep_rew, number of options, number of actions, int_reward_per_epi
-        csv_writer = csv.writer(fd, delimiter=',')
-        csv_writer.writerow(['environment number','episode number', 'episode reward', 'episode length options', 'episode length primitives', 'intrinsic reward per episode'])
 
     writer = SummaryWriter(log_path)
 
@@ -99,9 +78,6 @@ def main():
     obs_rms = RunningMeanStd(shape=(1, 1, 84, 84))
     pre_obs_norm_step = int(default_config['ObsNormStep'])
     discounted_reward = RewardForwardFilter(int_gamma)
-
-    use_rnd = False
-    use_random_actions = False
 
     agent = RNDAgent
 
@@ -146,11 +122,8 @@ def main():
     child_conns = []
     for idx in range(num_worker):
         parent_conn, child_conn = Pipe()
-        # parent process env instance is a copy of the child process env. As long as all comunication to env is through the Pipe
-        # consistency is maintained
         work = env_type(env_id, is_render, idx, child_conn, sticky_action=sticky_action, p=action_prob,
                         life_done=life_done)
-
         work.start()
         works.append(work)
         parent_conns.append(parent_conn)
@@ -165,16 +138,15 @@ def main():
     sample_i_rall = 0
     global_update = 0
     global_step = 0
-    true_global_step = 0
 
     # normalize obs
     print('Start to initailize observation normalization parameter.....')
     next_obs = []
     for _ in range(num_step * pre_obs_norm_step):
-        # actions = np.random.randint(0, output_size, size=(num_worker,))
+        actions = np.random.randint(0, output_size, size=(num_worker,))
 
-        for parent_conn in parent_conns:
-            parent_conn.send('random')
+        for parent_conn, action in zip(parent_conns, actions):
+            parent_conn.send(action)
 
         for parent_conn in parent_conns:
             s, r, d, rd, lr, _ = parent_conn.recv()
@@ -186,245 +158,156 @@ def main():
             next_obs = []
     print('End to initalize...')
 
-    total_option_executions = 0
-    total_primitive_executions = 0
+    accumulated_worker_episode_reward = np.zeros((num_worker,))
 
-    episode_counter = [0 for _ in range(num_worker)]
-    episode_rewards = [0 for _ in range(num_worker)]
-    episode_trajectories = [[] for _ in range(num_worker)]
-    episode_length_primitives = [0 for _ in range(num_worker)]
-
+    episode_rewards = [[] for _ in range(num_worker)]
     step_rewards = [[] for _ in range(num_worker)]
     global_ep = 0
 
-    write_to_file_counter = 0
-
     while True:
-        total_all_state, total_all_next_obs, total_state, total_reward, total_done, total_action, total_int_reward, total_next_obs, total_ext_values, total_int_values, total_policy, total_policy_np = \
-            [], [], [], [], [], [], [], [], [], [], [], []
+        total_state, total_reward, total_done, total_action, total_int_reward, total_next_obs, total_ext_values, total_int_values, total_policy, total_policy_np = \
+            [], [], [], [], [], [], [], [], [], []
         global_step += (num_worker * num_step)
         global_update += 1
 
-
         # Step 1. n-step rollout
         for cur_step in range(num_step):
+            actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255.)
 
+            for parent_conn, action in zip(parent_conns, actions):
+                parent_conn.send(action)
+
+            next_states, rewards, dones, real_dones, log_rewards, next_obs = [], [], [], [], [], []
             for parent_conn in parent_conns:
-                parent_conn.send('get_available_actions')
-
-            available_actions = []
-            actions = []
-
-            for i, parent_conn in enumerate(parent_conns):
-                available_actions_list = parent_conn.recv()
-                if use_random_actions:
-                    action = np.random.choice(np.where(available_actions_list)[0])
-                    episode_trajectories[i].append(action)
-                    actions.append(actions)
-                    parent_conn.send(action)
-                else:
-                    available_actions.append(available_actions_list)
-
-            executed_actions = [None for _ in parent_conns]
-            if not use_random_actions:
-                actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255., available_actions)
-
-                for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
-                    episode_trajectories[i].append(action)
-                    parent_conn.send(action)
-                    executed_actions[i] = action
-
-
-            next_states, rewards, dones, real_dones, log_rewards, next_obs, all_states, all_next_obs = [], [], [], [], [], [], [], []
-            for i, parent_conn in enumerate(parent_conns):
-                s, r, d, rd, lr, info = parent_conn.recv()
-                # print("number of frames", len(info['frames']), "steps", info['n_steps'])
-
-                # if len(info['frames']) > 0:
-                    # all_states.extend(info['frames'])
-                    # all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84]) for s in info['frames']])
-                all_states.extend([s])
-                all_next_obs.extend([s[-1, :, :].reshape([1, 84, 84])])
-
-                episode_rewards[i] += r
-                episode_length_primitives[i] += info['n_steps'] if 'n_steps' in info.keys() else 1
-                total_option_executions += 1
-                total_primitive_executions += info['n_steps'] if 'n_steps' in info.keys() else 1
-
-                intrinsic_reward = agent.compute_intrinsic_reward(
-                    ((s[-1, :, :].reshape([1, 84, 84]) - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
-
-                with open(run_path / 'step_data.csv','a+') as fd:
-                    #env_num, ep num, num option executions total, num actions executions total, ext op reward, done, real_done, action, player_pos, int_reward_per_one_decision
-                    csv_writer = csv.writer(fd, delimiter=',')
-                    if 'states' in info.keys():
-                        csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
-                                r, d, rd, executed_actions[i], str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
-                    else:
-                        csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
-                                r, d, rd, executed_actions[i], "NA", intrinsic_reward])
-                    fd.flush()
-                    # print(i, episode_counter[i], action)
-
-                if rd:
-                    with open(run_path / 'episode_data.csv','a+') as fd:
-                        csv_writer = csv.writer(fd, delimiter=',')
-                        csv_writer.writerow([i, episode_counter[i], episode_rewards[i], len(episode_trajectories[i]), episode_length_primitives[i]])
-                    episode_counter[i] += 1
-                    episode_rewards[i] = 0
-                    episode_trajectories[i] = []
-                    global_ep += 1
-
-
+                s, r, d, rd, lr, _ = parent_conn.recv()
                 next_states.append(s)
                 rewards.append(r)
                 dones.append(d)
                 real_dones.append(rd)
                 log_rewards.append(lr)
                 next_obs.append(s[-1, :, :].reshape([1, 84, 84]))
-                true_global_step += info['n_steps'] if 'n_steps' in info.keys() else 1
 
-            if not use_random_actions:
-                all_states = np.stack(all_states, axis=0)
-                all_next_obs = np.stack(all_next_obs)
-                next_states = np.stack(next_states)
-                rewards = np.hstack(rewards)
-                dones = np.hstack(dones)
-                real_dones = np.hstack(real_dones)
-                next_obs = np.stack(next_obs)
+            next_states = np.stack(next_states)
+            rewards = np.hstack(rewards)
+            dones = np.hstack(dones)
+            real_dones = np.hstack(real_dones)
+            next_obs = np.stack(next_obs)
 
-                # total reward = int reward + ext Reward
-                intrinsic_reward = agent.compute_intrinsic_reward(
-                    ((next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
-                intrinsic_reward = np.hstack(intrinsic_reward)
-                sample_i_rall += intrinsic_reward[sample_env_idx]
+            accumulated_worker_episode_reward += rewards
+            for i in range(len(rewards)):
+                step_rewards[i].append(rewards[i])
+                if real_dones[i]:
+                    episode_rewards[i].append(accumulated_worker_episode_reward[i])
+                    accumulated_worker_episode_reward[i] = 0
 
+            # total reward = int reward + ext Reward
+            intrinsic_reward = agent.compute_intrinsic_reward(
+                ((next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
+            intrinsic_reward = np.hstack(intrinsic_reward)
+            sample_i_rall += intrinsic_reward[sample_env_idx]
 
-
-                total_next_obs.append(next_obs)
-                total_int_reward.append(intrinsic_reward)
-                total_all_state.append(all_states)
-                total_all_next_obs.append(all_next_obs)
-                total_state.append(states)
-                total_reward.append(rewards)
-                total_done.append(dones)
-                total_action.append(actions)
-                total_ext_values.append(value_ext)
-                total_int_values.append(value_int)
-                total_policy.append(policy)
-                total_policy_np.append(policy.cpu().numpy())
-
-                states = next_states[:, :, :, :]
-
-                sample_rall += log_rewards[sample_env_idx]
-
-                sample_step += 1
-                if real_dones[sample_env_idx]:
-                    sample_episode += 1
-                    writer.add_scalar('data/reward_per_epi', sample_rall, sample_episode)
-                    writer.add_scalar('data/reward_per_rollout', sample_rall, global_update)
-                    writer.add_scalar('data/step', sample_step, sample_episode)
-                    sample_rall = 0
-                    sample_step = 0
-                    sample_i_rall = 0
-                # writer.add_scalar('data/avg_reward_per_step', np.mean(rewards), global_step + num_worker * (cur_step - num_step))
-
-        if not use_random_actions:
-
-            # while all(episode_rewards):
-            #     global_ep += 1
-                # avg_ep_reward = np.mean([env_ep_rewards.pop(0) for env_ep_rewards in episode_rewards])
-                # writer.add_scalar('data/avg_reward_per_episode', avg_ep_reward, global_ep)
-                # with open(run_path / 'data.csv','a') as fd:
-                #     csv_writer = csv.writer(fd, delimiter=',')
-                #     csv_writer.writerow([avg_ep_reward, global_step, true_global_step])
-
-            _, value_ext, value_int, _ = agent.get_action(np.float32(states) / 255., None)
+            total_next_obs.append(next_obs)
+            total_int_reward.append(intrinsic_reward)
+            total_state.append(states)
+            total_reward.append(rewards)
+            total_done.append(dones)
+            total_action.append(actions)
             total_ext_values.append(value_ext)
             total_int_values.append(value_int)
-            # --------------------------------------------------
+            total_policy.append(policy)
+            total_policy_np.append(policy.cpu().numpy())
 
-            total_state = np.stack(total_state).reshape([-1, 4, 84, 84])
-            assert(total_all_state[0].shape[1] == 4 and total_all_state[0].shape[2] == 84 and total_all_state[0].shape[3] == 84)
-            total_all_state = np.concatenate(total_all_state).reshape([-1, 4, 84, 84])
-            total_reward = np.stack(total_reward).transpose().clip(-1, 1)
-            total_action = np.stack(total_action).transpose().reshape([-1])
-            total_done = np.stack(total_done).transpose()
-            total_next_obs = np.stack(total_next_obs).transpose([1, 0, 2, 3, 4]).reshape([-1, 1, 84, 84])
-            assert(total_all_next_obs[0].shape[1] == 1 and total_all_next_obs[0].shape[2] == 84)
-            total_all_next_obs = np.concatenate(total_all_next_obs).reshape([-1, 1, 84, 84])
-            total_ext_values = np.stack(total_ext_values).transpose()
-            total_int_values = np.stack(total_int_values).transpose()
-            total_logging_policy = np.vstack(total_policy_np)
+            states = next_states[:, :, :, :]
 
-            # Step 2. calculate intrinsic reward
-            # running mean intrinsic reward
-            total_int_reward = np.stack(total_int_reward).transpose()
-            #total_int_reward = np.stack(total_int_reward).swapaxes(0, 1)
-            total_reward_per_env = np.array([discounted_reward.update(reward_per_step) for reward_per_step in
-                                             total_int_reward.T])
-            mean, std, count = np.mean(total_reward_per_env), np.std(total_reward_per_env), len(total_reward_per_env)
-            reward_rms.update_from_moments(mean, std ** 2, count)
+            sample_rall += log_rewards[sample_env_idx]
 
-            # normalize intrinsic reward
-            total_int_reward /= np.sqrt(reward_rms.var)
-            writer.add_scalar('data/int_reward_per_epi', np.sum(total_int_reward) / num_worker, sample_episode)
-            writer.add_scalar('data/int_reward_per_rollout', np.sum(total_int_reward) / num_worker, global_update)
-            # -------------------------------------------------------------------------------------------
-            # logging Max action probability
-            writer.add_scalar('data/max_prob', softmax(total_logging_policy).max(1).mean(), sample_episode)
+            sample_step += 1
+            if real_dones[sample_env_idx]:
+                sample_episode += 1
+                writer.add_scalar('data/reward_per_epi', sample_rall, sample_episode)
+                writer.add_scalar('data/reward_per_rollout', sample_rall, global_update)
+                writer.add_scalar('data/step', sample_step, sample_episode)
+                sample_rall = 0
+                sample_step = 0
+                sample_i_rall = 0
 
-            # Step 3. make target and advantage
-            # extrinsic reward calculate
-            ext_target, ext_adv = make_train_data(total_reward,
-                                                  total_done,
-                                                  total_ext_values,
-                                                  gamma,
-                                                  num_step,
-                                                  num_worker)
+            writer.add_scalar('data/avg_reward_per_step', np.mean(rewards), global_step + num_worker * (cur_step - num_step))
 
-            # intrinsic reward calculate
-            # None Episodic
-            int_target, int_adv = make_train_data(total_int_reward,
-                                                  np.zeros_like(total_int_reward),
-                                                  total_int_values,
-                                                  int_gamma,
-                                                  num_step,
-                                                  num_worker)
+        while all(episode_rewards):
+            global_ep += 1
+            avg_ep_reward = np.mean([env_ep_rewards.pop(0) for env_ep_rewards in episode_rewards])
+            writer.add_scalar('data/avg_reward_per_episode', avg_ep_reward, global_ep)
+            writer.add_scalar('data/avg_reward_per_episode_at_step', avg_ep_reward, global_step)
 
-            if not use_rnd:
-                int_target = np.zeros(ext_target.shape)
-                int_adv = 0
+        _, value_ext, value_int, _ = agent.get_action(np.float32(states) / 255.)
+        total_ext_values.append(value_ext)
+        total_int_values.append(value_int)
+        # --------------------------------------------------
 
-            # add ext adv and int adv
-            if use_rnd:
-                total_adv = int_adv * int_coef + ext_adv * ext_coef
-            else:
-                total_adv = ext_adv * ext_coef
-            # -----------------------------------------------
+        total_state = np.stack(total_state).transpose([1, 0, 2, 3, 4]).reshape([-1, 4, 84, 84])
+        total_reward = np.stack(total_reward).transpose().clip(-1, 1)
+        total_action = np.stack(total_action).transpose().reshape([-1])
+        total_done = np.stack(total_done).transpose()
+        total_next_obs = np.stack(total_next_obs).transpose([1, 0, 2, 3, 4]).reshape([-1, 1, 84, 84])
+        total_ext_values = np.stack(total_ext_values).transpose()
+        total_int_values = np.stack(total_int_values).transpose()
+        total_logging_policy = np.vstack(total_policy_np)
 
-            # Step 4. update obs normalize param
-            obs_rms.update(total_next_obs)
-            # -----------------------------------------------
+        # Step 2. calculate intrinsic reward
+        # running mean intrinsic reward
+        total_int_reward = np.stack(total_int_reward).transpose()
+        #total_int_reward = np.stack(total_int_reward).swapaxes(0, 1)
+        total_reward_per_env = np.array([discounted_reward.update(reward_per_step) for reward_per_step in
+                                         total_int_reward.T])
+        mean, std, count = np.mean(total_reward_per_env), np.std(total_reward_per_env), len(total_reward_per_env)
+        reward_rms.update_from_moments(mean, std ** 2, count)
 
-            # Step 5. Training!
-            if use_rnd:
-                # agent.train_only_rnd(np.float32(total_all_state) / 255., ((total_all_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
-                agent.train_model(np.float32(total_state) / 255., ext_target, int_target, total_action,
-                                  total_adv, ((total_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5),
-                                  total_policy)
-            else:
-                agent.train_only_ppo(np.float32(total_state) / 255., ext_target, int_target, total_action,
-                                  total_adv, ((total_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5),
-                                  total_policy)
+        # normalize intrinsic reward
+        total_int_reward /= np.sqrt(reward_rms.var)
+        writer.add_scalar('data/int_reward_per_epi', np.sum(total_int_reward) / num_worker, sample_episode)
+        writer.add_scalar('data/int_reward_per_rollout', np.sum(total_int_reward) / num_worker, global_update)
+        # -------------------------------------------------------------------------------------------
 
-            if global_step % (num_worker * num_step * 100) == 0:
-                print('Now Global Step :{}'.format(global_step))
-                torch.save(agent.model.state_dict(), model_path)
-                torch.save(agent.rnd.predictor.state_dict(), predictor_path)
-                torch.save(agent.rnd.target.state_dict(), target_path)
+        # logging Max action probability
+        writer.add_scalar('data/max_prob', softmax(total_logging_policy).max(1).mean(), sample_episode)
+
+        # Step 3. make target and advantage
+        # extrinsic reward calculate
+        ext_target, ext_adv = make_train_data(total_reward,
+                                              total_done,
+                                              total_ext_values,
+                                              gamma,
+                                              num_step,
+                                              num_worker)
+
+        # intrinsic reward calculate
+        # None Episodic
+        int_target, int_adv = make_train_data(total_int_reward,
+                                              np.zeros_like(total_int_reward),
+                                              total_int_values,
+                                              int_gamma,
+                                              num_step,
+                                              num_worker)
+
+        # add ext adv and int adv
+        total_adv = int_adv * int_coef + ext_adv * ext_coef
+        # -----------------------------------------------
+
+        # Step 4. update obs normalize param
+        obs_rms.update(total_next_obs)
+        # -----------------------------------------------
+
+        # Step 5. Training!
+        agent.train_model(np.float32(total_state) / 255., ext_target, int_target, total_action,
+                          total_adv, ((total_next_obs - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5),
+                          total_policy)
+
+        if global_step % (num_worker * num_step * 100) == 0:
+            print('Now Global Step :{}'.format(global_step))
+            torch.save(agent.model.state_dict(), model_path)
+            torch.save(agent.rnd.predictor.state_dict(), predictor_path)
+            torch.save(agent.rnd.target.state_dict(), target_path)
 
 
 if __name__ == '__main__':
-    default_config = parse_args_and_update_config(default_config)
     main()

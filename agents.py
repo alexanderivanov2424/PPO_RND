@@ -53,20 +53,13 @@ class RNDAgent(object):
 
         self.model = self.model.to(self.device)
 
-    def get_action(self, state, available_actions):
-        available_actions = np.array(available_actions, dtype=float)
+    def get_action(self, state):
         state = torch.tensor(state, dtype=torch.float)
         policy, value_ext, value_int = self.model(state)
-        if available_actions is not None and np.sum(policy.detach().numpy()) == 0:
-            action = np.array([np.random.choice(np.where(actions==1)[0]) for actions in available_actions])
-        elif available_actions is not None:
-            action_prob = F.softmax(policy, dim=-1).data.cpu().numpy()
-            action_prob = action_prob * available_actions
-            action_prob /= np.sum(action_prob, axis=1)[:,None]
-            action = self.random_choice_prob_index(action_prob)
-        else:
-            action_prob = F.softmax(policy, dim=-1).data.cpu().numpy()
-            action = self.random_choice_prob_index(action_prob)
+        action_prob = F.softmax(policy, dim=-1).data.cpu().numpy()
+
+        action = self.random_choice_prob_index(action_prob)
+
         return action, value_ext.data.cpu().numpy().squeeze(), value_int.data.cpu().numpy().squeeze(), policy.detach()
 
     @staticmethod
@@ -82,83 +75,6 @@ class RNDAgent(object):
         intrinsic_reward = (target_next_feature - predict_next_feature).pow(2).sum(1) / 2
 
         return intrinsic_reward.data.cpu().numpy()
-
-    def train_only_rnd(self, s_batch, next_obs_batch):
-        s_batch = torch.tensor(s_batch, dtype=torch.float)
-        next_obs_batch = torch.tensor(next_obs_batch, dtype=torch.float)
-
-        sample_range = np.arange(len(s_batch))
-        forward_mse = nn.MSELoss(reduction='none')
-        for _ in range(self.epoch):
-            np.random.shuffle(sample_range)
-            for j in range(int(len(s_batch) / self.batch_size)):
-                sample_idx = sample_range[self.batch_size * j:self.batch_size * (j + 1)]
-
-                # --------------------------------------------------------------------------------
-                # for Curiosity-driven(Random Network Distillation)
-                predict_next_state_feature, target_next_state_feature = self.rnd(next_obs_batch[sample_idx])
-
-                forward_loss = forward_mse(predict_next_state_feature, target_next_state_feature.detach()).mean(-1)
-                # Proportion of exp used for predictor update
-                mask = torch.rand(len(forward_loss)) < self.update_proportion
-                loss = (forward_loss * mask).sum() / torch.max(mask.sum(), torch.tensor([1]))
-                # ---------------------------------------------------------------------------------
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                global_grad_norm_(list(self.model.parameters())+list(self.rnd.predictor.parameters()))
-                self.optimizer.step()
-
-    def train_only_ppo(self, s_batch, target_ext_batch, target_int_batch, y_batch, adv_batch, next_obs_batch, old_policy):
-        s_batch = torch.tensor(s_batch, dtype=torch.float)
-        target_ext_batch = torch.tensor(target_ext_batch, dtype=torch.float)
-        target_int_batch = torch.tensor(target_int_batch, dtype=torch.float)
-        y_batch = torch.tensor(y_batch, dtype=torch.long)
-        adv_batch = torch.tensor(adv_batch, dtype=torch.float)
-        next_obs_batch = torch.tensor(next_obs_batch, dtype=torch.float)
-
-        sample_range = np.arange(len(s_batch))
-        forward_mse = nn.MSELoss(reduction='none')
-
-        with torch.no_grad():
-            policy_old_list = torch.stack(old_policy).permute(1, 0, 2).contiguous().view(-1, self.output_size).to(
-                self.device)
-
-            m_old = Categorical(F.softmax(policy_old_list, dim=-1))
-            log_prob_old = m_old.log_prob(y_batch)
-            # ------------------------------------------------------------
-
-        for _ in range(self.epoch):
-            np.random.shuffle(sample_range)
-            for j in range(int(len(s_batch) / self.batch_size)):
-                sample_idx = sample_range[self.batch_size * j:self.batch_size * (j + 1)]
-
-                policy, value_ext, value_int = self.model(s_batch[sample_idx])
-                m = Categorical(F.softmax(policy, dim=-1))
-                log_prob = m.log_prob(y_batch[sample_idx])
-
-                ratio = torch.exp(log_prob - log_prob_old[sample_idx])
-
-                surr1 = ratio * adv_batch[sample_idx]
-                surr2 = torch.clamp(
-                    ratio,
-                    1.0 - self.ppo_eps,
-                    1.0 + self.ppo_eps) * adv_batch[sample_idx]
-
-                actor_loss = -torch.min(surr1, surr2).mean()
-                critic_ext_loss = F.mse_loss(value_ext.sum(1), target_ext_batch[sample_idx])
-                #critic_int_loss = F.mse_loss(value_int.sum(1), target_int_batch[sample_idx])
-
-                critic_loss = critic_ext_loss
-
-                entropy = m.entropy().mean()
-
-                self.optimizer.zero_grad()
-                loss = actor_loss + 0.5 * critic_loss - self.ent_coef * entropy
-                loss.backward()
-                global_grad_norm_(list(self.model.parameters())+list(self.rnd.predictor.parameters()))
-                self.optimizer.step()
-
 
     def train_model(self, s_batch, target_ext_batch, target_int_batch, y_batch, adv_batch, next_obs_batch, old_policy):
         s_batch = torch.tensor(s_batch, dtype=torch.float)
