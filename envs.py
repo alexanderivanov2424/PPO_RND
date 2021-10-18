@@ -157,6 +157,20 @@ class AtariEnvironment(Environment):
         while True:
             action = self.child_conn.recv()
 
+            if action == 'random':
+                if hasattr(self.env, 'available_options'):
+                    action = np.random.choice(np.where(self.env.available_options()==1)[0])
+                else:
+                    action = np.random.choice(np.where(np.ones((self.env.action_space.n,))==1)[0])
+
+            elif action == 'get_available_actions':
+                # assert np.all(self.env.available_options() == self.env.action_space.available_actions()), "action space should match env method"
+                if hasattr(self.env, 'available_options'):
+                    self.child_conn.send(self.env.available_options())
+                else:
+                    self.child_conn.send(np.ones((self.env.action_space.n,)))
+                continue
+
             if 'Breakout' in self.env_id:
                 action += 1
 

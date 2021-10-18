@@ -11,6 +11,8 @@ from envs import *
 from utils import *
 
 
+from gym_montezuma.envs import MontezumasRevengeEnv
+
 def main():
     print({section: dict(config[section]) for section in config.sections()})
     train_method = default_config['TrainMethod']
@@ -18,7 +20,9 @@ def main():
     env_id = default_config['EnvID']
     env_type = default_config['EnvType']
 
-    if env_type == 'atari':
+    if 'skills' in env_id:
+        env = MontezumasRevengeEnv()
+    elif env_type == 'atari':
         env = gym.make(env_id)
     else:
         raise NotImplementedError
@@ -139,10 +143,8 @@ def main():
     print('Start to initailize observation normalization parameter.....')
     next_obs = []
     for _ in range(num_step * pre_obs_norm_step):
-        actions = np.random.randint(0, output_size, size=(num_worker,))
-
-        for parent_conn, action in zip(parent_conns, actions):
-            parent_conn.send(action)
+        for parent_conn in parent_conns:
+            parent_conn.send('random')
 
         for parent_conn in parent_conns:
             s, r, d, rd, lr, _ = parent_conn.recv()
@@ -162,10 +164,22 @@ def main():
 
         # Step 1. n-step rollout
         for cur_step in range(num_step):
-            actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255.)
+            for parent_conn in parent_conns:
+                parent_conn.send('get_available_actions')
 
-            for parent_conn, action in zip(parent_conns, actions):
-                parent_conn.send(action)
+            available_actions = []
+            actions = []
+
+            for i, parent_conn in enumerate(parent_conns):
+                available_actions_list = parent_conn.recv()
+                available_actions.append(available_actions_list)
+
+            executed_actions = [None for _ in parent_conns]
+            actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255., available_actions)
+
+            for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
+                    parent_conn.send(action)
+                    executed_actions[i] = action
 
             next_states, rewards, dones, real_dones, log_rewards, next_obs = [], [], [], [], [], []
             for parent_conn in parent_conns:
@@ -212,7 +226,7 @@ def main():
                 sample_i_rall = 0
 
 
-        _, value_ext, value_int, _ = agent.get_action(np.float32(states) / 255.)
+        _, value_ext, value_int, _ = agent.get_action(np.float32(states) / 255., None)
         total_ext_values.append(value_ext)
         total_int_values.append(value_int)
         # --------------------------------------------------
