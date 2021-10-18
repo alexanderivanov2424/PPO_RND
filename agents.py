@@ -57,7 +57,6 @@ class RNDAgent(object):
         available_actions = np.array(available_actions, dtype=float)
         state = torch.tensor(state, dtype=torch.float)
         policy, value_ext, value_int = self.model(state)
-
         if available_actions is None:
             action_prob = F.softmax(policy, dim=-1).data.cpu().numpy()
             action = self.random_choice_prob_index(action_prob)
