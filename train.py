@@ -10,6 +10,8 @@ from config import *
 from envs import *
 from utils import *
 
+import csv
+
 
 from gym_montezuma.envs import MontezumasRevengeEnv
 
@@ -43,11 +45,21 @@ def main():
     run_path = Path(f'runs/{env_id}_{datetime.now().strftime("%b%d_%H-%M-%S")}')
     log_path = run_path / 'logs'
     subgoals_path = run_path / 'subgoal_plots'
-
+    print(run_path)
     run_path.mkdir(parents=True)
     log_path.mkdir()
     subgoals_path.mkdir()
 
+    with open(run_path / 'step_data.csv','w+') as fd:
+        #env_num, ep num, num option executions total, num actions executions total, ext op reward, done, real_done, action, player_pos, int_reward_per_one_decision
+        csv_writer = csv.writer(fd, delimiter=',')
+        csv_writer.writerow(['environment number','episode number', 'total option executions', 'total primitive action executions',
+                'extrinsic option reward', 'done', 'real done', 'action', 'player position (x,y)', 'intrinsic reward for one decision'])
+
+    with open(run_path / 'episode_data.csv','w+') as fd:
+        #env_num, ep num, ep_rew, number of options, number of actions, int_reward_per_epi
+        csv_writer = csv.writer(fd, delimiter=',')
+        csv_writer.writerow(['environment number','episode number', 'episode reward', 'episode length options', 'episode length primitives', 'intrinsic reward per episode'])
 
     use_cuda = default_config.getboolean('UseGPU')
     use_gae = default_config.getboolean('UseGAE')
@@ -156,6 +168,16 @@ def main():
             next_obs = []
     print('End to initalize...')
 
+    total_option_executions = 0
+    total_primitive_executions = 0
+
+    episode_counter = [0 for _ in range(num_worker)]
+    episode_rewards = [0 for _ in range(num_worker)]
+    episode_trajectories = [[] for _ in range(num_worker)]
+    episode_length_primitives = [0 for _ in range(num_worker)]
+
+    global_ep = 0
+
     while True:
         total_state, total_reward, total_done, total_action, total_int_reward, total_next_obs, total_ext_values, total_int_values, total_policy, total_policy_np = \
             [], [], [], [], [], [], [], [], [], []
@@ -178,12 +200,42 @@ def main():
             actions, value_ext, value_int, policy = agent.get_action(np.float32(states) / 255., available_actions)
 
             for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
+                    episode_trajectories[i].append(action)
                     parent_conn.send(action)
                     executed_actions[i] = action
 
             next_states, rewards, dones, real_dones, log_rewards, next_obs = [], [], [], [], [], []
             for parent_conn in parent_conns:
-                s, r, d, rd, lr, _ = parent_conn.recv()
+                s, r, d, rd, lr, info = parent_conn.recv()
+
+                episode_rewards[i] += r
+                episode_length_primitives[i] += info['n_steps'] if 'n_steps' in info.keys() else 1
+                total_option_executions += 1
+                total_primitive_executions += info['n_steps'] if 'n_steps' in info.keys() else 1
+
+                intrinsic_reward = agent.compute_intrinsic_reward(
+                    ((s[-1, :, :].reshape([1, 84, 84]) - obs_rms.mean) / np.sqrt(obs_rms.var)).clip(-5, 5))
+
+                with open(run_path / 'step_data.csv','a+') as fd:
+                    csv_writer = csv.writer(fd, delimiter=',')
+                    if 'states' in info.keys():
+                        csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
+                                r, d, rd, executed_actions[i], str((info['states'][-1]['player_x'],info['states'][-1]['player_y'])), intrinsic_reward])
+                    else:
+                        csv_writer.writerow([i, episode_counter[i], total_option_executions, total_primitive_executions,
+                                r, d, rd, executed_actions[i], "NA", intrinsic_reward])
+                    fd.flush()
+
+                if rd or d:
+                    with open(run_path / 'episode_data.csv','a+') as fd:
+                        csv_writer = csv.writer(fd, delimiter=',')
+                        csv_writer.writerow([i, episode_counter[i], episode_rewards[i], len(episode_trajectories[i]), episode_length_primitives[i]])
+                    episode_counter[i] += 1
+                    episode_rewards[i] = 0
+                    episode_trajectories[i] = []
+                    global_ep += 1
+
+
                 next_states.append(s)
                 rewards.append(r)
                 dones.append(d)
