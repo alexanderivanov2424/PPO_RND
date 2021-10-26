@@ -45,7 +45,6 @@ def main():
     run_path = Path(f'runs/{env_id}_{datetime.now().strftime("%b%d_%H-%M-%S")}')
     log_path = run_path / 'logs'
     subgoals_path = run_path / 'subgoal_plots'
-    print(run_path)
     run_path.mkdir(parents=True)
     log_path.mkdir()
     subgoals_path.mkdir()
