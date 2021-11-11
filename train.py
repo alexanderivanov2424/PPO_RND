@@ -10,6 +10,8 @@ from config import *
 from envs import *
 from utils import *
 
+import time
+
 import csv
 
 
@@ -175,6 +177,8 @@ def main():
     episode_trajectories = [[] for _ in range(num_worker)]
     episode_length_primitives = [0 for _ in range(num_worker)]
 
+    env_acting_times = [0 for _ in range(num_worker)]
+
     global_ep = 0
 
     while True:
@@ -200,12 +204,14 @@ def main():
 
             for i, (parent_conn, action) in enumerate(zip(parent_conns, actions)):
                     episode_trajectories[i].append(action)
+                    env_acting_times[i] = time.time()
                     parent_conn.send(action)
                     executed_actions[i] = action
 
             next_states, rewards, dones, real_dones, log_rewards, next_obs = [], [], [], [], [], []
-            for parent_conn in parent_conns:
+            for i,parent_conn in enuumerate(parent_conns):
                 s, r, d, rd, lr, info = parent_conn.recv()
+                env_acting_times[i] = time.time() - env_acting_times[i]
 
                 episode_rewards[i] += r
                 episode_length_primitives[i] += info['n_steps'] if 'n_steps' in info.keys() else 1
@@ -241,6 +247,8 @@ def main():
                 real_dones.append(rd)
                 log_rewards.append(lr)
                 next_obs.append(s[-1, :, :].reshape([1, 84, 84]))
+
+            print("Average number of actions per second: ", 1/np.mean(env_acting_times))
 
             next_states = np.stack(next_states)
             rewards = np.hstack(rewards)
